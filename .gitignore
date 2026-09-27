@@ -1,0 +1,19 @@
+#build artifacts
+build/
+*.o
+*.out
+
+# Market data
+data/
+
+# Executables
+itch_parser
+
+# Profiling / benchmark output
+perf.data
+perf.data.old
+
+# Editor / OS files
+.vscode/
+*.swp
+*~
