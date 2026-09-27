@@ -1,0 +1,33 @@
+### High-Performance Market Data Processing: Microarchitectural Study of NASDAQ ITCH 5.0
+
+* Conducted a **systems-level performance study of NASDAQ TotalView-ITCH 5.0 binary market-data processing**, using a **260,055,285-byte (~248 MiB) real ITCH capture** containing **8,696,559 complete messages** across 14 message types; the workload was chosen to study realistic market-data parsing rather than relying on synthetic benchmarks.
+
+* Researched the **NASDAQ ITCH 5.0 protocol specification and binary message layouts**, including message framing, 2-byte big-endian length prefixes, message-type dispatch, fixed-width fields, 48-bit timestamps, 64-bit order references, price/share encodings, and order-lifecycle messages; implemented a correctness-oriented subset covering **System Event (S), Stock Directory (R), Add Order (A), Add Order with MPID (F), Order Executed (E), Order Executed with Price (C), Order Cancel (X), Order Delete (D), and Order Replace (U)**.
+
+* Built the experimental engine in **C++20 on Linux/Ubuntu**, with a modular binary-reader/parser architecture consisting of `BinaryReader`, protocol-specific message structures, parser dispatch, and a reproducible benchmark harness; used **GCC, objdump, and Linux `perf`** to connect source-level design choices to generated machine code and hardware performance counters.
+
+* Processed the complete binary capture through a zero-copy-in-memory benchmark path after loading the **~248 MiB dataset into a `std::vector<uint8_t>`**, explicitly decoding ITCH's **big-endian network-order fields on an x86-64 little-endian processor** through specialized `read_u16_be`, `read_u32_be`, `read_u48_be`, and `read_u64_be` routines rather than relying on native-memory reinterpretation.
+
+* Established a reproducible **B0 baseline of 0.23625 s mean runtime over 5 executions**, corresponding to approximately **36.81 million messages/s** and **~1.05 GiB/s-class input throughput**; benchmarked the full **8.70M-message** workload rather than extrapolating from small samples.
+
+* Performed hardware-level profiling with Linux `perf`, measuring approximately **1.037B CPU cycles, 2.031B instructions, 369.2M branches, and 4.88M branch misses** during the benchmark; observed approximately **1.96 instructions/cycle** and **1.3% branch-miss rate**, while Top-Down analysis reported **17.5% backend-bound, 68.0% bad-speculation, 6.3% frontend-bound, and 8.2% retiring** fractions.
+
+* Used `perf record` and annotated call stacks to identify concrete execution hotspots: **`__memset_evex_unaligned_erms` (~16.3%)**, `read_u16_be` (~7.9%), `parse_add_order` (~7.9%), `read_u48_be` (~6.7%), `read_u64_be` (~5.6%), `read_u32_be` (~4.9%), `parse_order_delete` (~5.8%), and parser dispatch (~3.9%), converting hardware-profile observations into experimentally testable optimization hypotheses.
+
+* Investigated **temporary-object/structure initialization overhead**, specifically compiler-generated memory initialization associated with fixed-size character arrays inside decoded ITCH message structures; removing explicit zero-initialization reduced observed `memset` profile contribution from roughly **16.3% to 13.3%**, but produced statistically insignificant wall-clock improvement and was approximately **0.35% slower** across controlled 5-run comparisons, demonstrating that profiler hotspot share alone was insufficient evidence for an optimization.
+
+* Reverse-engineered generated machine code with **`objdump -d -C`**, tracing the implementation of binary field decoders down to individual bounds checks, byte loads, shifts, and OR operations; identified that `read_u16_be`, `read_u32_be`, `read_u48_be`, and `read_u64_be` remained as separately callable functions in the profiled baseline, exposing a potential **function-call and repeated bounds-check overhead** in the hottest parsing paths.
+
+* Investigated **Link-Time Optimization (LTO)** as a targeted hypothesis for eliminating decoder call overhead and enabling cross-translation-unit optimization; compiled the complete workload with **GCC `-O2 -flto`** and measured **0.26205 s mean runtime over 5 runs**, approximately **10.9% slower than the 0.23625 s baseline**, providing a negative experimental result and motivating assembly-level comparison rather than assuming LTO/inlining necessarily improves performance.
+
+* Designed the project around a controlled **baseline → profile → hypothesize → modify one variable → benchmark → inspect assembly → explain microarchitecturally** methodology, emphasizing reproducibility and causal attribution rather than optimizing solely for headline throughput.
+
+* Analyzed the workload on an **Intel 11th-Gen Core i5-1135G7 system (4 physical cores / 8 logical processors via SMT)** with **16 GB RAM and 512 GB SSD**, using the processor's cache hierarchy as part of the microarchitectural analysis: **48 KiB L1 data cache/core, 32 KiB L1 instruction cache/core, ~1.3 MiB L2/core, and 8 MiB shared L3**, with **64-byte cache lines**; used these characteristics to reason about locality, cache-line granularity, data layout, and the cost of repeatedly materializing decoded message structures.
+
+* Quantified the real workload composition as **3,700,805 Add Order (A), 3,541,990 Order Delete (D), 624,573 Order Cancel (X), 369,795 Order Replace (U), 178,942 Add Order with MPID (F), 34,870 Order Executed with Price (C), 11 Order Executed (E), 8,851 Stock Directory (H), 8,849 Stock Locate/related messages (Y), 8,849 Stock Directory (R), 8,352 Trade/related messages (P), 3,700,805+ messages dominated by order-book lifecycle traffic**, using the observed message distribution to prioritize optimization effort according to actual workload frequency rather than protocol completeness.
+
+* Investigated **message dispatch, binary decoding, memory initialization, object materialization, cache behavior, branch behavior, and compiler optimization** as interconnected components of a low-latency market-data pipeline; deliberately avoided implementing the entire ITCH specification so that engineering effort remained focused on experimentally isolating performance mechanisms.
+
+* Treated the raw ITCH capture as the canonical benchmark and used synthetic data only where appropriate for **isolated correctness, edge-case, or microbenchmark experiments**, preserving realistic message-frequency and field-layout characteristics for end-to-end performance measurements.
+
+* Documented the benchmark methodology, compiler configuration, dataset integrity, message counts, profiling results, disassembly observations, hypotheses, and negative experimental results to produce a reproducible **microarchitectural performance study rather than a conventional parser implementation**.
